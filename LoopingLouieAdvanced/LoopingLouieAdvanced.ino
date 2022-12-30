@@ -86,7 +86,7 @@ switch(state)
 {
   case (HOLD_SPEED):
   {
-    int randomNumber = random(0, 100);
+    int randomNumber = (int)random(0, 100);
     if (randomNumber < HOLD_PROABILITY)
     {
       state = HOLD_SPEED;  
