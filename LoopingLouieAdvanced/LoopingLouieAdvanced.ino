@@ -11,8 +11,8 @@
 #define BREAKTIME  200 // milli secs
 #define MINIMUM_SPEED     30
 #define STEP_SIZE         30
-#define NEW_SPEED_PROABILITY           12
-#define DROP_PROABILITY                 6
+#define NEW_SPEED_PROABILITY           16
+#define DROP_PROABILITY                 3
 #define REVERSE_DIRECTION_PROABILITY    6
 #define HOLD_PROABILITY               100 - (NEW_SPEED_PROABILITY + DROP_PROABILITY + REVERSE_DIRECTION_PROABILITY)
 #define CLOCKWISE 1
