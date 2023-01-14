@@ -4,18 +4,19 @@
 */
 
 // Includes 
-#include <ESP8266WebServer.h>
+//#include <ESP8266WebServer.h>
 
 // Defines
-#define ROUNDTIME  500 // milli secs
-#define BREAKTIME  200 // milli secs
-#define MINIMUM_SPEED     30
-#define STEP_SIZE         30
-#define NEW_SPEED_PROABILITY           12
-#define DROP_PROABILITY                 6
-#define REVERSE_DIRECTION_PROABILITY    6
+#define ROUNDTIME       1000 // milli secs
+#define BREAKTIME       200 // milli secs
+#define ACCELERATETIME  100 // milli secs
+#define MINIMUM_PWM     100
+#define NUMBER_OF_SPEEDS   5
+#define NEW_SPEED_PROABILITY           30
+#define DROP_PROABILITY                 4
+#define REVERSE_DIRECTION_PROABILITY    15
 #define HOLD_PROABILITY               100 - (NEW_SPEED_PROABILITY + DROP_PROABILITY + REVERSE_DIRECTION_PROABILITY)
-#define CLOCKWISE 1
+//#define CLOCKWISE 1
 #if CLOCKWISE
 #define OUT_PIN_A 14
 #define OUT_PIN_B 12
@@ -32,34 +33,46 @@ enum STATE{
   REVERSE_DIRECTION,
   HOLD_REVERSE,
   BREAK,
-  DROP
+  HOLD_DROP,
+  ACCELERATE
   };
 
+enum DIRECTION{
+  CLOCKWISE,
+  COUNTERCLOCKWISE
+};
+
 // Globals and consts
-STATE state = HOLD_SPEED;
+STATE state = NEW_SPEED;
+STATE stateAfterBreak = NEW_SPEED;
+STATE stateAfterAccelerate = HOLD_SPEED;
 uint32_t timer = 0;
 bool isTimerRunning = false;
-int speedPercent = 50; // (-100%...100%) positive values clockwise, negative values counterclockwise 
+DIRECTION pwmDirection = CLOCKWISE;
+int pwmSpeedValues[NUMBER_OF_SPEEDS] = {0, MINIMUM_PWM};
+int pwmSpeedIndex = 1;
+int accelerateTargetIndex = 1;
+DIRECTION accelerateTargetDirection = CLOCKWISE;
 
-const char* ssid = "Tower";  // SSID
+//const char* ssid = "Tower";  // SSID
 //const char* pass = "loopinglouie"; // must be >= 8 characters
 
-IPAddress ip(192,168,4,1); // should be 192.168.4.x
-IPAddress gateway(192,168,4,1);  // should be 192.168.4.x
-IPAddress subnet(255,255,255,0);
+//IPAddress ip(192,168,4,1); // should be 192.168.4.x
+//IPAddress gateway(192,168,4,1);  // should be 192.168.4.x
+//IPAddress subnet(255,255,255,0);
 //ESP8266WebServer server(80);
 
-String state_str[] = {"HOLD_SPEED", "NEW_SPEED", "REVERSE_DIRECTION", "HOLD_REVERSE", "BREAK", "DROP"};
+String state_str[] = {"HOLD_SPEED", "NEW_SPEED", "REVERSE_DIRECTION", "HOLD_REVERSE", "BREAK", "HOLD_DROP", "ACCELERATE"};
 
 // Functions
-void SetPWM(int speedPercent);
+void SetPWM(DIRECTION direction, int index);
 bool IsTimerExpired();
 void SetTimer(uint32_t millisecs);
 void SetSeed();
-
-
+void ToggleBuiltInLed();
 
 void setup() {
+  pinMode(LED_BUILTIN, OUTPUT);
   pinMode(OUT_PIN_A, OUTPUT);
   pinMode(OUT_PIN_B, OUTPUT);
   Serial.begin(115200);
@@ -70,13 +83,15 @@ void setup() {
 
   //WiFi.softAPConfig(ip, gateway, subnet); 
   //WiFi.softAP(ssid);
-  delay(500);
-  
+//  delay(500);
+  for(int i = 1; i < NUMBER_OF_SPEEDS; i++)
+  {
+    pwmSpeedValues[i] = map(i, 1, NUMBER_OF_SPEEDS-1, MINIMUM_PWM, 0xFF);
+  }
   SetSeed();
 }
 
 void loop() {
-  //Serial.println(state_str[state]);
   switch(state)
   {
     case (HOLD_SPEED):
@@ -90,17 +105,14 @@ void loop() {
     
     case (NEW_SPEED):
     {
-      speedPercent = (int)random(MINIMUM_SPEED, 100);
-      SetPWM(speedPercent);
+      accelerateTargetIndex = random(1, NUMBER_OF_SPEEDS);
+      accelerateTargetDirection = CLOCKWISE;
     }
     break;
     
     case (REVERSE_DIRECTION):
     {
-      SetPWM(0);
-      delay(BREAKTIME);
-      speedPercent = (int) -(random(60, 100));
-      SetPWM(speedPercent);
+      SetPWM(COUNTERCLOCKWISE, 1);
     }
     break;
     
@@ -115,29 +127,46 @@ void loop() {
     
     case (BREAK):
     {
-      SetPWM(0);
-      delay(BREAKTIME);   
+      if(pwmSpeedIndex != accelerateTargetIndex && IsTimerExpired()){
+        SetPWM(pwmDirection, pwmSpeedIndex - 1);
+        if(pwmSpeedIndex != accelerateTargetIndex) {
+          SetTimer(BREAKTIME);
+        }
+        else
+        {
+          SetTimer(BREAKTIME * 3);
+        }
+      }
     }
     break;
 
-    case (DROP):
+    case (HOLD_DROP):
     {      
       if(!isTimerRunning)
       {
-        SetPWM(0);
-        SetTimer(1200);
+        SetTimer(500);
+      }
+    }
+    break;
+    
+    case (ACCELERATE):
+    {      
+      if(pwmSpeedIndex != accelerateTargetIndex && IsTimerExpired()){
+        SetPWM(accelerateTargetDirection, pwmSpeedIndex + 1);
+        SetTimer(ACCELERATETIME);
       }
     }
     break;
   }
 
+  STATE oldState = state;
   switch(state)
   {
     case (HOLD_SPEED):
     {
       if(IsTimerExpired())
       {
-        int randomNumber = (int)random(0, 100);
+        int randomNumber = (int)random(0, 101);
         if (randomNumber < HOLD_PROABILITY)
         {
           state = HOLD_SPEED;  
@@ -148,11 +177,15 @@ void loop() {
         }
         else if (randomNumber < (HOLD_PROABILITY + NEW_SPEED_PROABILITY + DROP_PROABILITY))
         {
-          state = DROP;
+          accelerateTargetIndex = 0;
+          stateAfterBreak = HOLD_DROP;
+          state = BREAK;
         }
         else
         {
-          state = REVERSE_DIRECTION;
+          accelerateTargetIndex = 0;
+          stateAfterBreak = REVERSE_DIRECTION;
+          state = BREAK;
         }
       }
     }
@@ -160,7 +193,20 @@ void loop() {
     
     case (NEW_SPEED):
     {
-      state = HOLD_SPEED;
+      if(pwmSpeedIndex < accelerateTargetIndex)
+      {
+        stateAfterAccelerate = HOLD_SPEED;
+        state = ACCELERATE;
+      }
+      else if (pwmSpeedIndex == accelerateTargetIndex)
+      {
+        state = HOLD_SPEED;
+      }
+      else
+      {
+        stateAfterBreak = HOLD_SPEED;
+        state = BREAK;
+      }
     }
     break;
     
@@ -174,6 +220,7 @@ void loop() {
     {
       if(IsTimerExpired())
       {
+        stateAfterBreak = NEW_SPEED;
         state = BREAK;
       }
     }
@@ -181,11 +228,13 @@ void loop() {
     
     case (BREAK):
     {
-      state = NEW_SPEED;
+      if(pwmSpeedIndex == accelerateTargetIndex && IsTimerExpired()){
+        state = stateAfterBreak;
+      }
     }
     break;
 
-    case (DROP):
+    case (HOLD_DROP):
     {
       if(IsTimerExpired())
       {
@@ -194,24 +243,32 @@ void loop() {
     }
     break;
 
+    case (ACCELERATE):
+    {      
+      if(pwmSpeedIndex == accelerateTargetIndex && IsTimerExpired()){
+        state = stateAfterAccelerate;
+      }
+    }
+    break;
+
+  }
+  if(oldState != state)
+  {
+    Serial.println(state_str[(int)state]);
   }
 }
 
-
-void SetPWM(int speedPercent)
+void SetPWM(DIRECTION direction, int index)
 {
-  int direction = -1;
-  if(0 < speedPercent)
-  {
-    direction = 1;
-  }
-  int pwmValue = map(direction * speedPercent, 0, 100, 0, 255);
+  pwmDirection = direction;
+  pwmSpeedIndex = index;
+  int pwmValue = pwmSpeedValues[index];;
 
-  if(0 < speedPercent) {
+  if(direction == CLOCKWISE) {
     analogWrite(OUT_PIN_A, pwmValue);
     digitalWrite(OUT_PIN_B, LOW);
   } 
-  else if(0 == speedPercent)
+  else if(0 == index)
   {
     digitalWrite(OUT_PIN_A, LOW);
     digitalWrite(OUT_PIN_B, LOW);
@@ -222,10 +279,16 @@ void SetPWM(int speedPercent)
     analogWrite(OUT_PIN_B, pwmValue);
   }
 
-  Serial.print("speed: ");
-  Serial.print(speedPercent);
+  Serial.print("index: ");
+  if(direction == COUNTERCLOCKWISE)
+  {
+    Serial.print("-");
+  }
+  Serial.print(index);
   Serial.print(" pwm: ");
   Serial.println(pwmValue);
+
+//  ToggleBuiltInLed();
 }
 void SetSeed()
 {
@@ -236,9 +299,9 @@ void SetSeed()
   {
     adcValue = analogRead(0);
     rnd_seed = (adcValue & 0x0F) << i;
-    delay(10);
+    delay(50);
     Serial.println(adcValue);
-    //Serial.println(rnd_seed);
+    ToggleBuiltInLed();
   }
 
   randomSeed(rnd_seed);
@@ -260,4 +323,9 @@ bool IsTimerExpired()
     return true;
   }
   return false;
+}
+
+void ToggleBuiltInLed()
+{
+  digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN)); 
 }
